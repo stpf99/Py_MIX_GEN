@@ -8,5 +8,6 @@ files one time can be used, so every mixset have unical tracks,
 
 mixes can be for example For only KEY F and only tempo BPM between 80-100
 
+also minimal and maximal track length can be specified
 
 <img width="964" alt="diseqc" src="https://github.com/stpf99/Py_MIX_GEN/blob/4b54b6d22ad7673c26a08cddfdaccdeb7dd49673/Przechwycenie%20obrazu%20ekranu_2023-12-09_21-59-25.png">
