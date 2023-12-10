@@ -208,6 +208,7 @@ class MixGenerator(QMainWindow):
             self.timer.timeout.connect(self.process_tracks)
             self.timer.start(1000)  # Timer co sekundę
 
+
     def process_tracks(self):
         if self.current_track < self.total_tracks and self.current_mix_length < self.duration:
             line = self.lines[self.current_track]
@@ -215,7 +216,7 @@ class MixGenerator(QMainWindow):
             if track_info:
                 bpm, key, track_length, track_path = track_info
 
-                if (
+                if key is not None and (
                     track_path not in self.used_tracks and
                     key.startswith(self.base_key) and
                     self.bpm_range[0] <= int(bpm) <= self.bpm_range[1] and
