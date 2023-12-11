@@ -444,11 +444,18 @@ class MixGenerator(QMainWindow):
     def get_track_metadata(self, track_path):
         try:
             audiofile = MP3(track_path)
-            # Use mutagen to get the track length in seconds
-            return audiofile.info.bpm, audiofile.info.key, int(audiofile.info.length)
+            bpm = self.get_bpm(audiofile)
+            key = self.get_key(audiofile)
+
+            # Extract track length using mutagen
+            track_length = self.get_track_length(track_path)
+
+            return bpm, key, track_length
+
         except Exception as e:
             print(f"Error getting track metadata for {track_path}: {e}")
             return None, None, None
+
 
     def get_track_length(self, track_path):
         try:
@@ -458,6 +465,7 @@ class MixGenerator(QMainWindow):
         except Exception as e:
             print(f"Error extracting track length for {track_path}: {e}")
             return None
+
 
 
 if __name__ == "__main__":
