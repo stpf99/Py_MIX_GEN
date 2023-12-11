@@ -266,9 +266,9 @@ class MixGenerator(QMainWindow):
 
         def append_to_playlist(artist, title, version):
             playlist_line = f'{artist} - {title}'
-           # if version:
-            #    playlist_line += f' ({version})'
-           # playlist_lines.append(playlist_line)
+            if version:
+                playlist_line += f' ({version})'
+            playlist_lines.append(playlist_line)
 
         for i in range(self.total_tracks):
             line = self.lines[i]
@@ -285,6 +285,7 @@ class MixGenerator(QMainWindow):
             playlist_file.write("\n".join(playlist_lines))
 
         print("Playlist generated and saved successfully.")
+
 
 
     def get_track_info_for_playlist(self, line):
