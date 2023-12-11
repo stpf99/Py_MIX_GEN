@@ -17,10 +17,11 @@ class MixGenerator(QMainWindow):
         self.output_name = "mixset.mp3"
         self.duration = 60 * 1000  # 60 minut w milisekundach
         self.crossfade_duration = 10  # 10 sekund
-        self.base_key = "C"
+        self.base_key = "D"
         self.bpm_range = (20, 300)  # Przedział BPM
         self.min_track_length = 10  # Minimalna długość utworu w sekundach
         self.max_track_length = 600  # Maksymalna długość utworu w sekundach
+        self.used_tracks = []
 
         self.init_ui()
 
@@ -132,7 +133,7 @@ class MixGenerator(QMainWindow):
         input_directory = QFileDialog.getExistingDirectory(self, "Select Input Directory", options=options)
         if input_directory:
             self.input_directory_line_edit.setText(input_directory)
-            self.input_directory = input_directory
+            self.input_directory = os.path.normpath(input_directory)
 
             # Automatically start creating the database in the selected input directory
             self.create_database()
@@ -143,7 +144,7 @@ class MixGenerator(QMainWindow):
         output_directory = QFileDialog.getExistingDirectory(self, "Select Output Directory", options=options)
         if output_directory:
             self.output_directory_line_edit.setText(output_directory)
-            self.output_directory = output_directory
+            self.output_directory = os.path.normpath(output_directory)
 
     def update_duration(self):
         self.duration = self.duration_slider.value() * 60 * 1000
@@ -188,13 +189,8 @@ class MixGenerator(QMainWindow):
         self.output_name += f"-{self.base_key}-{self.bpm_range[0]}-{self.bpm_range[1]}-{self.duration / 1000 / 60}min.mp3"
 
         self.progress_bar.setValue(0)
-
-        self.used_tracks = set()
-        used_tracks_file_path = os.path.join(self.input_directory, 'used_tracks.txt')
-
-        if os.path.exists(used_tracks_file_path):
-            with open(used_tracks_file_path, 'r') as used_tracks_file:
-                self.used_tracks = set(used_tracks_file.read().splitlines())
+        self.used_tracks = []
+        self.clear_old_playlist_entries()
 
         index_file_path = os.path.join(self.input_directory, 'baza.txt')
 
@@ -212,6 +208,16 @@ class MixGenerator(QMainWindow):
             self.timer.timeout.connect(self.process_tracks)
             self.timer.start(1000)  # Timer every second
 
+    def clear_old_playlist_entries(self):
+        # Remove older tracks from the playlist that were added in previous mixsets
+        lines_to_remove = []
+        for line in self.lines:
+            _, _, _, _, title, _ = self.get_track_info_for_playlist(line)
+            if title in self.used_tracks:
+                lines_to_remove.append(line)
+
+        for line in lines_to_remove:
+            self.lines.remove(line)
 
     def process_tracks(self):
         if self.current_track < self.total_tracks and self.current_mix_length < self.duration:
@@ -219,7 +225,7 @@ class MixGenerator(QMainWindow):
             bpm, key, track_length, artist, title, version = self.get_track_info_for_playlist(line)
             if title:
                 if key is not None and (
-                    title not in self.used_tracks and
+                    title not in [track['title'] for track in self.used_tracks] and
                     key.startswith(self.base_key) and
                     self.bpm_range[0] <= int(bpm) <= self.bpm_range[1] and
                     self.min_track_length <= int(track_length) <= self.max_track_length
@@ -237,15 +243,19 @@ class MixGenerator(QMainWindow):
                         # If this is the first track, just append it without crossfade
                         self.mixset = audiofile
 
-                    self.used_tracks.add(title)
+                    # Dodaj informacje o dodanym utworze do listy użytych utworów
+                    self.used_tracks.append({
+                        'title': title,
+                        'artist': artist,
+                        'version': version,
+                        'time_added': self.current_mix_length,
+                    })
+
                     self.current_mix_length += len(audiofile)
 
                 self.current_track += 1
                 progress_value = int((self.current_mix_length / self.duration) * 100)
                 self.progress_bar.setValue(progress_value)
-
-            else:
-                print(f"Error processing track at line {self.current_track + 1}")
 
         else:
             self.timer.stop()
@@ -253,12 +263,13 @@ class MixGenerator(QMainWindow):
             self.mixset.export(output_path, format='mp3')
 
             # Save used tracks to file
-            with open(os.path.join(self.input_directory, 'used_tracks.txt'), 'w') as used_tracks_file:
-                used_tracks_file.write('\n'.join(self.used_tracks))
+            with open(os.path.join(self.input_directory, 'used_tracks.txt'), 'a') as used_tracks_file:
+                for track in self.used_tracks:
+                    used_tracks_file.write(f"{track['title']}\n")
 
             print("Mixset generated successfully.")
 
-            # Generate and save the playlist
+            # Zmiana: Generowanie i zapisywanie playlisty
             self.generate_and_save_playlist()
 
     def generate_and_save_playlist(self):
@@ -270,11 +281,11 @@ class MixGenerator(QMainWindow):
                 playlist_line += f' ({version})'
             playlist_lines.append(playlist_line)
 
-        for title in self.used_tracks:  # Iteruj tylko po utworach dodanych do used_tracks
-            line = self.find_line_for_title(title)
-            if line:
-                _, _, _, artist, title, version = self.get_track_info_for_playlist(line)
-                append_to_playlist(artist, title, version)
+        # Sortuj utwory według czasu dodania do mixsetu
+        sorted_used_tracks = sorted(self.used_tracks, key=lambda x: x['time_added'])
+
+        for track in sorted_used_tracks:
+            append_to_playlist(track['artist'], track['title'], track['version'])
 
         # Construct playlist file name based on user input, key, BPM, and mixset length
         playlist_file_name = f"{self.output_name_line_edit.text()}_playlist-{self.base_key}-{self.bpm_range[0]}-{self.bpm_range[1]}-{self.duration / 1000 / 60}min.txt"
@@ -394,7 +405,7 @@ class MixGenerator(QMainWindow):
             print("Please select an input directory.")
             return
 
-        database_file_path = os.path.join(self.input_directory, 'baza.txt')
+        database_file_path = os.path.normpath(os.path.join(self.input_directory, 'baza.txt'))
 
         # Check if 'baza.txt' exists, if not, create it
         if not os.path.exists(database_file_path):
@@ -432,18 +443,12 @@ class MixGenerator(QMainWindow):
 
     def get_track_metadata(self, track_path):
         try:
-            audiofile = MP3(track_path)
-            bpm = self.get_bpm(audiofile)
-            key = self.get_key(audiofile)
-
-            # Extract track length using mutagen
-            track_length = self.get_track_length(track_path)
-
-            return bpm, key, track_length
-
+            audiofile = MP3(os.path.normpath(track_path))
+            # Use mutagen to get the track length in seconds
+            return int(audiofile.info.length)
         except Exception as e:
             print(f"Error getting track metadata for {track_path}: {e}")
-            return None, None, None
+            return None
 
 
     def get_track_length(self, track_path):
