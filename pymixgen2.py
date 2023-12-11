@@ -270,10 +270,10 @@ class MixGenerator(QMainWindow):
                 playlist_line += f' ({version})'
             playlist_lines.append(playlist_line)
 
-        for i in range(self.total_tracks):
-            line = self.lines[i]
-            _, _, _, artist, title, version = self.get_track_info_for_playlist(line)
-            if title:
+        for title in self.used_tracks:  # Iteruj tylko po utworach dodanych do used_tracks
+            line = self.find_line_for_title(title)
+            if line:
+                _, _, _, artist, title, version = self.get_track_info_for_playlist(line)
                 append_to_playlist(artist, title, version)
 
         # Construct playlist file name based on user input, key, BPM, and mixset length
@@ -286,6 +286,12 @@ class MixGenerator(QMainWindow):
 
         print("Playlist generated and saved successfully.")
 
+    def find_line_for_title(self, title):
+        for line in self.lines:
+            _, _, _, artist, current_title, _ = self.get_track_info_for_playlist(line)
+            if current_title == title:
+                return line
+        return None
 
 
     def get_track_info_for_playlist(self, line):
