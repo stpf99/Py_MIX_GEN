@@ -23,7 +23,11 @@ class MixGenerator(QMainWindow):
         self.max_track_length = 600  # Maksymalna długość utworu w sekundach
         self.used_tracks = []
         self.initial_playlist = []
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.process_tracks)
 
+        self.progress_timer = QTimer()
+        self.progress_timer.timeout.connect(self.update_progress)
         self.init_ui()
 
     def init_ui(self):
@@ -139,19 +143,22 @@ class MixGenerator(QMainWindow):
 
     def create_initial_playlist(self):
         index_file_path = os.path.join(self.input_directory, 'baza.txt')
+        used_tracks_file_path = os.path.join(self.input_directory, 'used_tracks.txt')
+
         with open(index_file_path, 'r') as index_file:
             self.initial_playlist = []
             for line in index_file:
                 line = line.strip().split(',')
                 if len(line) == 4:
                     track_path, bpm, key, duration = line
-                    # Dodaj utwór do wstępnej listy
-                    self.initial_playlist.append({
-                        'track_path': track_path,
-                        'bpm': int(bpm),
-                        'key': key,
-                        'duration': int(duration)
-                    })
+                    # Dodaj utwór do wstępnej listy, jeśli nie jest oznaczony jako użyty
+                    if not self.is_track_used(track_path):
+                        self.initial_playlist.append({
+                            'track_path': track_path,
+                            'bpm': int(bpm),
+                            'key': key,
+                            'duration': int(duration)
+                        })
 
             # Ustaw self.lines na skopiowaną listę utworów
             self.lines = self.initial_playlist.copy()
@@ -199,6 +206,15 @@ class MixGenerator(QMainWindow):
         self.max_track_length = self.max_track_length_spinbox.value()
 
     def generate_mixset(self):
+
+        if self.timer.isActive():
+            self.timer.stop()
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.process_tracks)
+        self.timer.start(1000)
+ 
+        self.used_tracks = []
+
         if not self.input_directory:
             print("Please select an input directory.")
             return
@@ -218,7 +234,7 @@ class MixGenerator(QMainWindow):
         self.output_name += f"-{self.base_key}-{self.bpm_range[0]}-{self.bpm_range[1]}-{self.duration / 1000 / 60}min.mp3"
 
         self.progress_bar.setValue(0)
-        self.used_tracks = []
+
         self.clear_old_playlist_entries()
 
         # Użyj wstępnej listy utworów do generowania mixsetu
@@ -233,6 +249,18 @@ class MixGenerator(QMainWindow):
         self.timer.timeout.connect(self.process_tracks)
         self.timer.start(1000)  # Timer every second
 
+        # Dodaj timer do monitorowania postępu
+        self.progress_timer = QTimer()
+        self.progress_timer.timeout.connect(self.update_progress)
+        self.timer.start(1000)  # Timer every second
+
+        # Add a slight delay before starting the progress timer to avoid conflicts
+        QTimer.singleShot(500, self.start_progress_timer)
+
+    def update_progress(self):
+        # Ustaw postęp na pasku
+        progress_value = int((self.current_mix_length / self.duration) * 100)
+        self.progress_bar.setValue(progress_value)
 
     def clear_old_playlist_entries(self):
         # Remove older tracks from the playlist that were added in previous mixsets
@@ -245,48 +273,91 @@ class MixGenerator(QMainWindow):
         for line in lines_to_remove:
             self.lines.remove(line)
 
+
+
+    def save_used_track(self, track_info):
+        used_tracks_file_path = os.path.join(self.input_directory, 'used_tracks.txt')
+        with open(used_tracks_file_path, 'a') as used_tracks_file:
+            used_tracks_file.write(f"{track_info}\n")
+
+    def is_track_used(self, title):
+        used_tracks_file_path = os.path.join(self.input_directory, 'used_tracks.txt')
+
+        # Sprawdź, czy plik istnieje
+        if not os.path.exists(used_tracks_file_path):
+            # Jeśli plik nie istnieje, utwórz go
+            with open(used_tracks_file_path, 'w'):
+                pass  # Pusty blok - tworzenie pustego pliku
+
+        with open(used_tracks_file_path, 'r') as used_tracks_file:
+            used_tracks = used_tracks_file.read().splitlines()
+            return title in used_tracks
+
+
     def process_tracks(self):
-        if self.current_track < self.total_tracks and self.current_mix_length < self.duration:
+        print("Processing tracks...")
+
+        # Zmniejsz granicę dla current_track i current_mix_length o 10 jednostek czasu
+        time_margin = 10
+
+        if self.current_track < self.total_tracks and self.current_mix_length < self.duration + time_margin:
             line = self.lines[self.current_track]
             bpm, key, track_length, artist, title, version = self.get_track_info_for_playlist(line)
             if title:
-                if key is not None and (
-                    title not in [track['title'] for track in self.used_tracks] and
-                    key.startswith(self.base_key) and
-                    self.bpm_range[0] <= int(bpm) <= self.bpm_range[1] and
-                    self.min_track_length <= int(track_length) <= self.max_track_length
-                ):
-                    audiofile = AudioSegment.from_file(line['track_path'])
+                print(f"Checking track: {title}")
 
-                    # Dodaj fade-in tylko dla pierwszego utworu
-                    if not self.mixset:
-                        fade_in_duration = min(self.crossfade_duration, len(audiofile) / 2)
-                        audiofile = audiofile.fade_in(fade_in_duration)
-                        self.mixset = audiofile
-                    else:
-                        # Dodaj utwór do mixsetu z crossfade
-                        self.mixset = self.mixset.append(audiofile, crossfade=self.crossfade_duration)
+                # Check if the track is already in used_tracks.txt
+                if self.is_track_used(line['track_path']):
+                    print(f"Skipping track {title} as it is already used.")
+                    self.current_track += 1
+                    self.update_progress()  # Update the progress bar
+                    return
 
-                    # Add information about the added track to the list of used tracks
-                    self.used_tracks.append({
-                        'title': title,
-                        'artist': artist,
-                        'version': version,
-                        'time_added': self.current_mix_length,
-                    })
+            if key is not None and (
+                title not in [track['title'] for track in self.used_tracks] and
+                key.startswith(self.base_key) and
+                self.bpm_range[0] <= int(bpm) <= self.bpm_range[1] and
+                self.min_track_length <= int(track_length) <= self.max_track_length
 
-                    self.current_mix_length += len(audiofile)
+            ):
+                print(f"Selecting track: {title}")
+                audiofile = AudioSegment.from_file(line['track_path'])
 
-                self.current_track += 1
-                progress_value = int((self.current_mix_length / self.duration) * 100)
-                self.progress_bar.setValue(progress_value)
+                # Add fade-in only for the first track
+                if not self.mixset:
+                    fade_in_duration = min(self.crossfade_duration, len(audiofile) / 2)    
+                    audiofile = audiofile.fade_in(fade_in_duration)
+                    self.mixset = audiofile
+                else:
+                    # Add the track to the mixset with crossfade
+                    self.mixset = self.mixset.append(audiofile, crossfade=self.crossfade_duration)
 
+                # Add information about the added track to the list of used tracks
+                self.used_tracks.append({
+                    'title': title,
+                    'artist': artist,
+                    'version': version,
+                    'time_added': self.current_mix_length,
+                })
+
+                # Save the used track to used_tracks.txt
+                self.save_used_track(line['track_path'])
+
+                self.current_mix_length += len(audiofile)
+
+                print(f"Selected track: {title}")
+
+            self.current_track += 1
+            self.update_progress()  # Update the progress bar
         else:
+            print("No title found for the current track.")
+            # Stop both timers when the processing is complete
             self.timer.stop()
+            self.progress_timer.stop()
 
-            # Stosuj crossfade tylko jeśli mamy więcej niż jeden utwór
+            # Apply crossfade only if there is more than one track
             if len(self.used_tracks) > 1:
-                fade_out_duration = min(self.crossfade_duration, len(self.mixset) / 2)
+                fade_out_duration = min(self.crossfade_duration, len(self.mixset) / 2)    
                 self.mixset = self.mixset.fade_out(fade_out_duration)
 
             output_path = os.path.join(self.output_directory, self.output_name)
@@ -294,14 +365,27 @@ class MixGenerator(QMainWindow):
 
             # Save used tracks to file
             with open(os.path.join(self.input_directory, 'used_tracks.txt'), 'a') as used_tracks_file:
-                for track in self.used_tracks:
-                    used_tracks_file.write(f"{track['title']}\n")
+                for track_info in self.used_tracks:
+                    self.save_used_track(track_info)
 
             print("Mixset generated successfully.")
+            print("Selected track list:")
+
+            # Print the list of selected tracks
+            for track_info in self.used_tracks:
+                print(f" - {track_info['title']}")
 
             # Change: Generate and save the playlist
             self.generate_and_save_playlist()
 
+
+    def start_progress_timer(self):
+        self.progress_timer.start(100)  # Timer every 100 milliseconds
+
+
+    def update_progress(self):
+        progress_value = int((self.current_mix_length / self.duration) * 100)
+        self.progress_bar.setValue(progress_value)
 
     def generate_and_save_playlist(self):
         playlist_lines = []
@@ -327,6 +411,7 @@ class MixGenerator(QMainWindow):
             playlist_file.write("\n".join(playlist_lines))
 
         print("Playlist generated and saved successfully.")
+
 
     def find_line_for_title(self, title):
         for line in self.lines:
